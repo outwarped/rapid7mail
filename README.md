@@ -12,44 +12,44 @@ Runs SMTP server. Checks if emails contain inside the body a keyword and an atta
 
 Clone repo:
 
-'''bash
+```bash
 git clone git@github.com:outwarped/rapid7mail.git
 cd rapid7mail
-'''
+```
 
 Install project dependencies and development dependencies
 
-'''bash
+```bash
 poetry install
-'''
+```
 
 Build main docker image
 
-'''bash
+```bash
 docker build -t application . 
-'''
+```
 
 ## Local Run
 
 Start mock SMTP server where resutls are going to be sent
 
-'''bash
+```bash
 docker run -ti --network host application \
     server
-'''
+```
 
 Start main application:
 
-'''bash
+```bash
 docker run -ti --network host application \
     --agent-email='agent@localhost' \
     --allowed-emails='anonymous@localhost' \
     --body-keywords='banana'
-'''
+```
 
 Send test email:
 
-'''bash
+```bash
 docker run -ti --network host \
     -v ${PWD}/rapid7mail/tools/eval_sample.py:/app/eval_sample.py \
     application \
@@ -59,4 +59,4 @@ docker run -ti --network host \
         --email-subject="Subject" \
         --email-body="Eat this banana" \
         --email-attachment=/app/eval_sample.py
-'''
+```

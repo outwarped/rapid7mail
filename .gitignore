@@ -1,7 +1,9 @@
 # python files
 **/*.pyc
 **/__pycache__
-
+dist
 
 # vscode files
 .vscode
+*.code-workspace
+.history

@@ -1,91 +1,84 @@
-from unittest import TestCase, TestSuite, TextTestRunner, IsolatedAsyncioTestCase
-from unittest.mock import patch, MagicMock, ANY
-import smtplib
-from click.testing import CliRunner
-from os.path import basename
-from email.mime.application import MIMEApplication
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.utils import COMMASPACE, formatdate
+from asyncio import Event as async_Event, Queue, new_event_loop, set_event_loop
+from email import message_from_bytes
+from io import BytesIO
 from textwrap import dedent
-from io import StringIO, BytesIO
-from asyncio import create_task, get_event_loop, new_event_loop, set_event_loop
+from threading import Event as sync_Event, Thread
 from time import sleep
-from threading import Thread, Event
-import signal
+from unittest import TestCase
+from unittest.mock import ANY, MagicMock, patch
 
-from rapid7mail.cmd.cli_main import entrypoint
+from rapid7mail.cmd.cli_main import main_loop
+from rapid7mail.config import Config
+from rapid7mail.handler.helpers import get_attachments
 
-def send_mail(send_from, send_to, subject, text, files=None, server="127.0.0.1", port=8025):
-    assert isinstance(send_to, list)
-
-    msg = MIMEMultipart()
-    msg['From'] = send_from
-    msg['To'] = COMMASPACE.join(send_to)
-    msg['Date'] = formatdate(localtime=True)
-    msg['Subject'] = subject
-
-    msg.attach(MIMEText(text))
-
-    for f in files or []:
-        part = MIMEApplication(
-                f.read(),
-                Name="some_file",
-            )
-        # After the file is closed
-        part['Content-Disposition'] = 'attachment; filename="some_file"'
-        msg.attach(part)
-
-
-    smtp = smtplib.SMTP(server, port)
-    smtp.sendmail(send_from, send_to, msg.as_string())
-    smtp.close()
+from tests.helpers import send_mail
 
 
 class E2ETest(TestCase):
-    def test_e2e(self):
-        runner = CliRunner()
+    @patch("rapid7mail.handler.worker.SMTP", autospec=True)
+    def test_e2e(self, smtp_client_mock):
+        # Given.
+        config = Config(
+            body_keywords=set(['eval']),
+            allowed_emails=set(['test@localhost']),
+            agent_email='agent@localhost',
+        )
+
+        sample_attachment = dedent("""
+        print("Hello World")
+        """).encode('utf8')
+        sample_body = f"Here is the keyword _{list(config.body_keywords)[0]}_ in this body"
+        send_from = list(config.allowed_emails)[0]
+        send_to = [config.agent_email]
+
+        # When.
+        eval_queue = Queue()
+        test_thread_event = sync_Event()
+        loop_stop_event = async_Event()
+
+        async def _mock_sendmail(*args, **kwargs):
+            test_thread_event.set()
+            loop_stop_event.set()
+            return {}
+
+        sendmail = MagicMock()
+        sendmail.side_effect = _mock_sendmail
+        smtp_client_mock.return_value.sendmail = sendmail
+
         def _run():
-            # TODO: implement loop termination
             loop = new_event_loop()
             set_event_loop(loop)
-            runner.invoke(entrypoint)
+            main_loop(config=config, eval_queue=eval_queue, stop_async_waitable=loop_stop_event)
 
         thread = Thread(target=_run)
         thread.start()
-        
+
         # TODO: implement a callback to know when the server is ready
-        sleep(1)
+        sleep(5)
 
-        event = Event()
-        async def _mock_send_mail(*args, **kwargs):
-            event.set()
-            return send_mail(*args, **kwargs)
-
-        send_eval_output_mock = MagicMock()
-        send_eval_output_mock.side_effect = _mock_send_mail
-        with patch("rapid7mail.handler.eval_worker.send_eval_output", send_eval_output_mock):
-
-            sample_attachment = dedent("""
-            print("Hello World")
-            """).encode('utf8')
-
-            send_mail(
-                send_from="a@rapid7.com",
-                send_to=["a@b.c"],
-                subject="Hello",
-                text="World",
-                files=[BytesIO(sample_attachment)],
-            )
-            
-            event.wait(timeout=10)
-        
-        self.assertTrue(event.is_set())
-        self.assertEqual(send_eval_output_mock.call_count, 1)
-        send_eval_output_mock.assert_called_once_with(
-            send_to_email="a@b.c",
-            eval_output=ANY,
+        errors = send_mail(
+            send_from=send_from,
+            send_to=send_to,
+            subject="Sujectb",
+            text=sample_body,
+            files=[BytesIO(sample_attachment)],
+            server=config.smtpd_hostname,
+            port=config.smtpd_port,
         )
-        output = send_eval_output_mock.call_args[1]['eval_output']
-        output.seek(0)
-        self.assertEqual(output.read(), b'Hello World\n')
+
+        test_thread_event.wait(timeout=10)
+
+        # Then.
+        self.assertEqual(errors, {})
+        self.assertTrue(test_thread_event.is_set())
+        self.assertEqual(sendmail.call_count, 1)
+        sendmail.assert_called_once_with(
+            config.agent_email,
+            [list(config.allowed_emails)[0]],
+            ANY,
+        )
+        envelope = sendmail.call_args[0][2]
+        envelope = envelope.encode('utf8')
+        message = message_from_bytes(envelope)
+        attachments = get_attachments(message)
+        self.assertListEqual(attachments, ['Hello World\n'])

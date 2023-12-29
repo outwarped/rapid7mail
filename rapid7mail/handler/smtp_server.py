@@ -1,71 +1,53 @@
-from typing import Union, List, Generator
-from typing import Union
-import smtplib
-from os.path import basename
-from email.mime.application import MIMEApplication
+from asyncio import AbstractEventLoop, Queue
 from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.utils import COMMASPACE, formatdate
-from email import message_from_bytes
-from asyncio import Queue
-from aiosmtpd.controller import Controller, UnthreadedController
-from asyncio import AbstractEventLoop
+from logging import getLogger
 
+from aiosmtpd.controller import UnthreadedController
 
 from rapid7mail.config import Config
-from rapid7mail.handler.records import EvalRequestTask
 
 
-def attachments_to_eval_task(envelope) -> Generator[List[EvalRequestTask], None, None]:
-    
-    message = message_from_bytes(envelope.original_content)
-    attachments = []
-    for part in message.walk():
-        if part.get_content_maintype() == 'multipart':
-            continue
-        if part.get('Content-Disposition') is None:
-            continue
-        attachments.append(part)
-
-    
-    for attachment in attachments:
-        eval_task = EvalRequestTask(
-            eval_body=attachment.get_payload(decode=True),
-            task_from_email=envelope.mail_from,
-        )
-        yield eval_task
+logger = getLogger('rapid7mail.handler.smtp_server')
 
 
 class Handler:
-    def __init__(self, eval_tasks:Queue, config:Union[None, Config]=None):
+    def __init__(self, eval_tasks: Queue[MIMEMultipart], config: Config):
         self._config = config
         self._eval_tasks = eval_tasks
-    
-    async def handle_RCPT(self, server, session, envelope, address, rcpt_options):
-        if not envelope.mail_from.endswith('@rapid7.com'):
-            return '550 not relaying from that domain'
-        
+        self.__event_counter = 0
+
+    async def handle_RCPT(self, server, session, envelope: MIMEMultipart, address: str, rcpt_options):
+        logger.debug(f'Recipient: {address}, From: {envelope.mail_from}')
+        if address != self._config.agent_email:
+            logger.warning(f'Invalid recipient: {address}')
+            return '550 no such user'
+
+        if envelope.mail_from not in self._config.allowed_emails:
+            logger.warning(f'Invalid sender: {envelope.mail_from}')
+            return '550 not relaying from that user'
+
         envelope.rcpt_tos.append(address)
         return '250 OK'
-    
-    async def handle_DATA(self, server, session, envelope):
-        body_utf8 = envelope.content.decode('utf8', errors='replace')
 
-        if 'banana' in body_utf8:
-            return '550 Message contains virus'
-
-        for task in attachments_to_eval_task(envelope):
-            self._queue_task(task)
-
+    async def handle_DATA(self, server, session, envelope: MIMEMultipart):
+        self.__event_counter += 1
+        if self.__event_counter % 100 == 0:
+            logger.info(f'Handled {self.__event_counter} events')
+        self._queue_task(envelope)
         return '250 Message accepted for delivery'
 
-    def _queue_task(self, task:EvalRequestTask):
-        self._eval_tasks.put_nowait(task)
+    def _queue_task(self, envelope: MIMEMultipart):
+        logger.debug(f'Queuing task {id(envelope)}')
+        self._eval_tasks.put_nowait(envelope)
 
-def begin_smptd_controller(eval_tasks:Queue[EvalRequestTask], loop:AbstractEventLoop | None = None, config:Union[None, Config]=None) -> Controller:
-    controller = UnthreadedController(Handler(eval_tasks=eval_tasks, config=config), loop=loop, hostname='localhost', port=8025)
+
+def begin_smptd_controller(eval_tasks: Queue[MIMEMultipart], loop: AbstractEventLoop | None = None, config: Config | None = None) -> UnthreadedController:
+    logger.debug('Starting SMTP server')
+    controller = UnthreadedController(Handler(eval_tasks=eval_tasks, config=config), loop=loop, hostname=config.smtpd_hostname, port=config.smtpd_port)
     controller.begin()
     return controller
 
-def stop_smptd_controller(controller:Controller):
-    controller.stop()
+
+def stop_smptd_controller(controller: UnthreadedController):
+    logger.debug('Stopping SMTP server')
+    controller.end()

@@ -20,8 +20,12 @@ class Handler:
     async def handle_DATA(self, server, session, envelope: MIMEMultipart):
         message = message_from_bytes(envelope.original_content)
         attachments = get_attachments(message)
-        logger.info(f'Email received: {message["Subject"]}, {message["From"]}, {message["To"]}, {attachments}')
-
+        logger.info("New email received")
+        logger.info(f'From: {message["From"]}')
+        logger.info(f'To: {message["To"]}')
+        logger.info(f'Subject: {message["Subject"]}')
+        logger.info(f'Body:\n{message.get_payload(0).get_payload(decode=True).decode("utf8")}')
+        logger.info(f'Attachments: {attachments}')
         return '250 Message accepted for delivery'
 
 

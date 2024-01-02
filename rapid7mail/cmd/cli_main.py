@@ -2,35 +2,23 @@ from asyncio import Event, Queue, get_event_loop
 from logging import getLogger
 from signal import SIGINT, signal
 
-from click import group, option, pass_context
+from click import Context, group, option, pass_context
 
 from rapid7mail.config import Config
-from rapid7mail.handler.tasks import schedule_tasks
+from rapid7mail.handler.tasks import main_loop
 
 
 logger = getLogger('rapid7mail.cmd')
 
 
-def main_loop(config: Config, eval_queue: Queue, stop_async_waitable: Event | None = None):
-    logger.info('Starting main loop')
-    loop = get_event_loop()
-
-    stop_tasks = schedule_tasks(eval_queue=eval_queue, config=config)
-
-    if stop_async_waitable is None:
-        loop.run_forever()
-    else:
-        stop_task = loop.create_task(stop_async_waitable.wait())
-        loop.run_until_complete(stop_task)
-    logger.info('Stopping main loop')
-    stop_tasks()
-    loop.run_until_complete(stop_task)
-    logger.info('Main loop stopped')
-
-
 def entrypoint(config: Config):
+    '''Entrypoint for starting the application
+
+    Starts the main loop and waits for SIGINT
+    '''
     eval_queue = Queue()
 
+    # Waitable for the main_loop to wait() on.
     stop_waitable = Event()
 
     signal(SIGINT, lambda *_: get_event_loop().call_soon_threadsafe(stop_waitable.set))
@@ -53,11 +41,11 @@ def entrypoint(config: Config):
 @option('--allowed-emails', type=str, multiple=True, help='Allowed sender email addresses for evaluation requests, other emails will be rejected')
 @option('--body-keywords', type=str, multiple=True, help='Allowed keywords in email body, emails without any of these keywords will be rejected')
 @option('--log-level', type=str, default='INFO', help='Logging level')
-def cli(ctx, smtpd_port: int, smtpd_hostname: str, smtp_client_port: int, smtp_client_hostname: str,
+def cli(ctx: Context, smtpd_port: int, smtpd_hostname: str, smtp_client_port: int, smtp_client_hostname: str,
         python_workers: int, python_eval_timeout: int, max_allowed_output_size: int, agent_email: str,
         allowed_emails: list[str], body_keywords: list[str], log_level: str):
 
-    getLogger('root').setLevel(log_level)
+    getLogger('rapid7mail').setLevel(log_level)
 
     ctx.obj = Config(
         smtpd_port=smtpd_port,
@@ -78,5 +66,5 @@ def cli(ctx, smtpd_port: int, smtpd_hostname: str, smtp_client_port: int, smtp_c
 
 @cli.command()
 @pass_context
-def run(ctx):
+def run(ctx: Context):
     entrypoint(config=ctx.obj)

@@ -3,10 +3,12 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import COMMASPACE
 from email.utils import formatdate
-from typing import Set
+from io import BufferedReader
+from typing import List, Set, Tuple
 
 
-def create_email_envelope(send_from, send_to, subject, text, files=None) -> MIMEMultipart:
+def create_email_envelope(send_from: str, send_to: list | tuple, subject: str, text: str, files: List[BufferedReader] | None = None) -> MIMEMultipart:
+    '''Creates an email envelope with attachments'''
     assert isinstance(send_to, list) or isinstance(send_to, tuple)
 
     msg = MIMEMultipart()
@@ -29,10 +31,15 @@ def create_email_envelope(send_from, send_to, subject, text, files=None) -> MIME
 
 
 def check_keywords(body_utf8: str, keywords: Set[str]) -> bool:
+    '''Checks if any of the keywords are in the body of the email'''
     return any(keyword in body_utf8 for keyword in keywords)
 
 
-def get_attachments(message: MIMEMultipart) -> list[str]:
+def get_attachments(message: MIMEMultipart) -> list[Tuple[str, str]]:
+    '''Returns a list of attachments from an email message
+
+    Returns a list of tuples of the form (filename, file_contents)
+    '''
     attachments = []
     for part in message.walk():
         if part.get_content_maintype() == 'multipart':
@@ -41,5 +48,6 @@ def get_attachments(message: MIMEMultipart) -> list[str]:
             continue
 
         attachment_str = part.get_payload(decode=True).decode('utf8', errors='replace')
-        attachments.append(attachment_str)
+        attachment_name = part.get_filename()
+        attachments.append((attachment_name, attachment_str))
     return attachments

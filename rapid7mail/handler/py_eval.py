@@ -10,6 +10,10 @@ logger = getLogger('rapid7mail.handler.py_eval')
 
 
 async def run_subprocess_eval(eval_body: str, max_output_size: int = STREAM_DEFAULT_LIMIT, timeout_delay: float | None = 10) -> str:
+    '''Runs eval_body in a subprocess and returns the result
+
+    Creates a temporary file with eval_body as the contents, then runs it with python.
+    '''
     # TODO: Use subprocess and strict jail for eval.
     # TODO: Timeout for file creation.
     # TODO: WORKAROUND with tempdir, NamedTemporaryFile bug. https://github.com/Tinche/aiofiles/issues/166

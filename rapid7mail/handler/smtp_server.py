@@ -42,6 +42,10 @@ class Handler:
 
 
 def begin_smptd_controller(eval_tasks: Queue[MIMEMultipart], loop: AbstractEventLoop | None = None, config: Config | None = None) -> UnthreadedController:
+    '''Starts an SMTP server task
+
+    Creates unthreaded controller in the main loop, async loop must NOT be running
+    '''
     logger.debug('Starting SMTP server')
     controller = UnthreadedController(Handler(eval_tasks=eval_tasks, config=config), loop=loop, hostname=config.smtpd_hostname, port=config.smtpd_port)
     controller.begin()
@@ -49,5 +53,6 @@ def begin_smptd_controller(eval_tasks: Queue[MIMEMultipart], loop: AbstractEvent
 
 
 def stop_smptd_controller(controller: UnthreadedController):
+    '''Stops an SMTP server task'''
     logger.debug('Stopping SMTP server')
     controller.end()
